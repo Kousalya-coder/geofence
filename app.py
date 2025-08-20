@@ -1,8 +1,7 @@
 import streamlit as st
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
-from streamlit_javascript import st_javascript
-import json
+from streamlit_js_eval import streamlit_js_eval
 import time
 
 # Initialize session state
@@ -21,35 +20,31 @@ if 'dest_location' not in st.session_state:
 geolocator = Nominatim(user_agent="geo_fence_alert")
 alert_distance = 1.0  # km before alert
 
-# JavaScript for geolocation with enhanced error handling
+# Browser-based location fetch
 def get_browser_location():
     try:
-        js_code = """
-        var coords = {};
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    coords.latitude = position.coords.latitude;
-                    coords.longitude = position.coords.longitude;
-                },
-                function(error) {
-                    coords.error = `Geolocation error: ${error.code} - ${error.message}`;
-                },
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-            );
-        } else {
-            coords.error = "Geolocation not supported by this browser";
-        }
-        coords;
-        """
-        result = st_javascript(js_code)
-        if result and 'latitude' in result:
-            return (result['latitude'], result['longitude'])
-        elif result and 'error' in result:
-            st.error(result['error'])
+        location = streamlit_js_eval(
+            js_expressions="""
+                new Promise((resolve, reject) => {
+                    if (navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => resolve({latitude: pos.coords.latitude, longitude: pos.coords.longitude}),
+                            (err) => resolve({error: "Geolocation error: " + err.message}),
+                            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                        );
+                    } else {
+                        resolve({error: "Geolocation not supported"});
+                    }
+                })
+            """,
+            key="get_location"
+        )
+        if location and "latitude" in location:
+            return (location["latitude"], location["longitude"])
+        elif location and "error" in location:
+            st.error(location["error"])
             return None
         else:
-            st.error("Geolocation failed. Please ensure permissions are granted.")
             return None
     except Exception as e:
         st.error(f"Geolocation execution error: {str(e)}")
@@ -58,7 +53,6 @@ def get_browser_location():
 # Streamlit UI
 st.title("Geofence Alert System")
 
-# Use columns for a compact layout
 col1, col2 = st.columns(2)
 with col1:
     start_input = st.text_input("Starting point (e.g., Theni)", key="start")
@@ -85,13 +79,11 @@ if st.button("Add Reminder"):
     else:
         st.error("Please enter a reminder location.")
 
-# Display reminders
 if st.session_state.reminders:
     st.subheader("Reminders")
     for rem in st.session_state.reminders:
         st.write(f"- {rem['name']}: Lat {rem['location'][0]}, Lng {rem['location'][1]}")
 
-# Start monitoring button
 if st.button("Set Locations & Start Monitoring"):
     start_addr = start_input.strip() + ", Tamil Nadu"
     dest_addr = dest_input.strip() + ", Tamil Nadu"
@@ -111,22 +103,19 @@ if st.button("Set Locations & Start Monitoring"):
     else:
         st.error("Please set start, destination, and at least one reminder.")
 
-# Stop monitoring button
 if st.button("Stop Monitoring"):
     st.session_state.monitoring = False
     for rem in st.session_state.reminders:
         rem['alerted'] = False
     st.success("Monitoring stopped.")
 
-# Monitoring loop
 if st.session_state.monitoring:
     st.write("Status: Monitoring...")
     location = get_browser_location()
     if location:
         st.session_state.current_location = location
         st.write(f"Current Location: Lat {location[0]}, Lng {location[1]}")
-        
-        # Check reminders
+
         for rem in st.session_state.reminders:
             if rem['alerted']:
                 continue
@@ -135,11 +124,9 @@ if st.session_state.monitoring:
                 st.toast(f"Approaching {rem['name']}! Distance: {dist:.2f} km")
                 rem['alerted'] = True
     else:
-        st.error("Unable to get current location.")
-    
-    # Simulate periodic updates
-    time.sleep(5)  # Poll every 5 seconds
-    st.rerun()
+        st.warning("Unable to get current location. Please check permissions.")
 
+    time.sleep(5)
+    st.rerun()
 else:
     st.write("Status: Idle")
